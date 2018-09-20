@@ -22,13 +22,15 @@ namespace TeamCityTestAnalysis
             var count = 100;  // TeamCity's limit
             var done = false;
             var authenticator = new HttpBasicAuthenticator(TEAMCITY_USERNAME, TEAMCITY_PASSWORD);
-            var file = File.CreateText(@"moo.txt");
+            var file = File.CreateText(@"moo.csv");
+            var failingBuilds = new Dictionary<string, build>();
+            var random = new Random();
             while (!done)
             {
                 var request = new RestRequest("builds", Method.GET);
                 request.AddQueryParameter("locator", $"status:FAILURE,branch:default:any,start:{start},count:{count}");
                 request.AddQueryParameter("fields",
-                    "count,nextHref,build(buildTypeId,number,branchName,buildType(name,project))");
+                    "count,nextHref,build(buildTypeId,number,branchName,buildType(id,name,project))");
                 request.AddHeader("Content-Type", "application/json");
                 request.AddHeader("Accept", "application/json");
                 authenticator.Authenticate(client, request);
@@ -37,12 +39,21 @@ namespace TeamCityTestAnalysis
                 foreach (var build in builds.build.Where(p =>
                     p.buildType.project.archived == false && IsRelevantBranchName(p.branchName)))
                 {
-                    file.WriteLine(
-                        $"Build {build.buildType.project.name} - {build.buildType.name} - {build.branchName}");
+                    var key = build.buildType.id + build.branchName;// + random.Next();
+                    if (!failingBuilds.ContainsKey(key))
+                    {
+                        failingBuilds.Add(key, build);
+                    }
                 }
                 start += count;
                 done = builds.count == 0;
 
+            }
+
+            foreach (var build in failingBuilds.Values)
+            {
+                    file.WriteLine(
+                        $"{build.buildType.project.name},{build.buildType.name},{build.branchName},{build.buildType.id}");
             }
             file.Close();
 
@@ -55,31 +66,6 @@ namespace TeamCityTestAnalysis
         {
             if (branchName == null) return false;
             return branchName == "develop" || branchName == "master" || branchName.StartsWith("support");
-        }
-
-        /// <summary>
-        /// Retrieves failing builds as defined by TeamCity. Excludes non-default branches
-        /// </summary>
-        private static void ShowTeamCityProblems()
-        {
-            var url = "https://builds.particular.net/httpAuth/app/rest/";
-            var buildType = "NET_Core_Compile";
-
-
-            var client = new RestClient(url);
-            var authenticator = new HttpBasicAuthenticator("kyle.baley", "Mf_Qjt6NDrgnwqudW3D]VjnfZPLOWl");
-            var request = new RestRequest("problemOccurrences", Method.GET);
-            request.AddQueryParameter("locator", "currentlyFailing:true");
-            request.AddQueryParameter("fields", "problemOccurrence(id,type,build(id,status,branchName,buildType(name,paused,projectName,project)))");
-            request.AddHeader("Content-Type", "application/json");
-            request.AddHeader("Accept", "application/json");
-            authenticator.Authenticate(client, request);
-            var response = client.Execute(request);
-            var problems = JsonConvert.DeserializeObject<problemOccurrences>(response.Content);
-            foreach (var problem in problems.problemOccurrence.Where(p => p.build.buildType.project.archived == false))
-            {
-                Console.WriteLine($"Build {problem.build.buildType.project.name} - {problem.build.buildType.name} - {problem.build.branchName}");
-            }
         }
     }
 
