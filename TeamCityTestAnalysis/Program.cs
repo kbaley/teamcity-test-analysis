@@ -22,15 +22,14 @@ namespace TeamCityTestAnalysis
             var count = 100;  // TeamCity's limit
             var done = false;
             var authenticator = new HttpBasicAuthenticator(TEAMCITY_USERNAME, TEAMCITY_PASSWORD);
-            var file = File.CreateText(@"moo.csv");
             var failingBuilds = new Dictionary<string, build>();
-            var random = new Random();
+            // Collect a list of build config/branch name combinations with a failing build
             while (!done)
             {
                 var request = new RestRequest("builds", Method.GET);
                 request.AddQueryParameter("locator", $"status:FAILURE,branch:default:any,start:{start},count:{count}");
                 request.AddQueryParameter("fields",
-                    "count,nextHref,build(buildTypeId,number,branchName,buildType(id,name,project))");
+                    "count,nextHref,build(webUrl,buildTypeId,number,branchName,buildType(id,name,project))");
                 request.AddHeader("Content-Type", "application/json");
                 request.AddHeader("Accept", "application/json");
                 authenticator.Authenticate(client, request);
@@ -39,7 +38,7 @@ namespace TeamCityTestAnalysis
                 foreach (var build in builds.build.Where(p =>
                     p.buildType.project.archived == false && IsRelevantBranchName(p.branchName)))
                 {
-                    var key = build.buildType.id + build.branchName;// + random.Next();
+                    var key = build.buildType.id + build.branchName;
                     if (!failingBuilds.ContainsKey(key))
                     {
                         failingBuilds.Add(key, build);
@@ -50,10 +49,19 @@ namespace TeamCityTestAnalysis
 
             }
 
+            // For each build config/branch combination, get the last build and see if it succeeded
+            var file = File.CreateText(@"moo.csv");
             foreach (var build in failingBuilds.Values)
             {
+                var request = new RestRequest($"buildTypes/id:{build.buildType.id}/builds/branch:name:{build.branchName}", Method.GET);
+                request.AddHeader("Content-Type", "application/json");
+                request.AddHeader("Accept", "application/json");
+                authenticator.Authenticate(client, request);
+                var response = client.Execute(request);
+                var lastBuild = JsonConvert.DeserializeObject<build>(response.Content);
+                if (lastBuild.status.ToLower() != "success")
                     file.WriteLine(
-                        $"{build.buildType.project.name},{build.buildType.name},{build.branchName},{build.buildType.id}");
+                        $"{build.buildType.project.name},{build.buildType.name},{build.branchName},{build.webUrl}");
             }
             file.Close();
 
